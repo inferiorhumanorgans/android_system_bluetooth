@@ -99,6 +99,11 @@ int enable_lpm = 0;
 int enable_hci = 0;
 int debug = 0;
 
+/* TAG JB 03/11/2011 */
+int hard_reset_bt = 0;
+#define RFKILL_WAIT 200000
+/* End of tag */
+
 struct termios termios;
 unsigned char buffer[1024];
 
@@ -112,9 +117,135 @@ unsigned char hci_update_baud_rate[] = { 0x01, 0x18, 0xfc, 0x06, 0x00, 0x00,
 unsigned char hci_write_bd_addr[] = { 0x01, 0x01, 0xfc, 0x06, 
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
+/* google code, Broadcom Bluetooth Feature */
+/* Message content :
+ * 0x01 -> header
+ * 0x27 -> msg_id
+ * 0xfc -> ?? msg_type ?
+ * 0x0c -> size of the content (starting from the byte after this one. set to 0xA in winmo)
+ * 0xXX -> SleepModeMode (0 = no sleep, 1 = uart, 3 = USB, 5 = USB with HOST_WAKE, 6 = SDIO)
+ * 0xXX -> SleepModeSuspendTimeout_Host (formula to reverse)
+ * 0xXX -> SleepModeSuspendTimeout_HC (same formula as above)
+ * 0xXX -> SleepModeBT_WAKEActiveHigh
+ * 0xXX -> SleepModeHOST_WAKEActiveHigh
+ * 0x01 -> Fixed parameter ?
+ * 0x01 -> Fixed parameter ?
+ * 0x00 -> Fixed parameter ?
+ * 0xXX -> SleepModeUSBSleepOnSuspend
+ * 0xXX -> SleepModeUSBResumeTimeout
+ * 0xXX -> Not used in winmo
+ * 0xXX -> Not used in winmo
+ */
+/*
 unsigned char hci_write_sleep_mode[] = { 0x01, 0x27, 0xfc, 0x0c, 
 	0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00,
 	0x00, 0x00 };
+*/
+unsigned char hci_write_sleep_mode[] = { 0x01, 0x27, 0xfc, 0x0a, 
+	0x01, 0x00, 0x0a, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00};
+
+/* TAG JB 03/11/2011 */
+unsigned char hci_write_high_speed_uart_msg[] = { 0x01, 0x45, 0xfc, 0x01, 
+	0x01};
+
+/* PCM settings msg 1
+ * Message content :
+ * 0x01 -> header
+ * 0x1c -> msg_id
+ * 0xfc -> ?? msg_type ?
+ * 0x05 -> size of the content (starting from the byte after this one)
+ * 0xXX -> PCMRouting
+ * 0xXX -> PCMInCallBitclock
+ * 0xXX -> PCMShortFrameSync
+ * 0xXX -> PCMSyncMode
+ * 0xXX -> PCMClockMode
+ */
+unsigned char hci_write_pcm_setting_1[] = { 0x01, 0x1c, 0xfc, 0x05, 
+	0x00, 0x04, 0x00, 0x00, 0x00};
+
+/* PCM settings msg 2
+ * Message content :
+ * 0x01 -> header
+ * 0x1e -> msg_id
+ * 0xfc -> ?? msg_type ?
+ * 0x05 -> size of the content (starting from the byte after this one)
+ * 0xXX -> PCMLSBFirst
+ * 0xXX -> PCMFillValue  ( might be swapped with PCMFillNum in some case)
+ * 0xXX -> PCMFillMethod
+ * 0xXX -> PCMFillNum    ( might be swapped with PCMFillValue in some case)
+ * 0xXX -> PCMRightJustify
+ */
+unsigned char hci_write_pcm_setting_2[] = { 0x01, 0x1e, 0xfc, 0x05, 
+	0x00, 0x03, 0x02, 0x00, 0x00};
+
+/* SCO settings 
+ * Not found in registry, defaulted to 0
+ *
+ * Message content :
+ * 0x01 -> header
+ * 0x22 -> msg_id
+ * 0xfc -> ?? msg_type ?
+ * 0x01 -> size of the content (starting from the byte after this one)
+ * 0xXX -> SCOTimeSlot
+ */
+unsigned char hci_write_sco_setting[] = { 0x01, 0x22, 0xfc, 0x01, 
+	0x00};
+
+/* Comfort noise settings 
+ * Not found in registry, defaulted to 0
+ *
+ * Message content :
+ * 0x01 -> header
+ * 0x20 -> msg_id
+ * 0xfc -> ?? msg_type ?
+ * 0x03 -> size of the content (starting from the byte after this one)
+ * 0xXX -> ComfortNoiseGain
+ * 0xXX -> ComfortNoiseRepeatLastSampleCount
+ * 0xXX -> ComfortNoiseGain
+ */
+unsigned char hci_write_comfort_noise_setting[] = { 0x01, 0x20, 0xfc, 0x03, 
+	0x00, 0x00, 0x00};
+
+/* Coexistence settings 
+ * Message content :
+ * 0x01 -> header
+ * 0x41 -> msg_id
+ * 0xfc -> ?? msg_type ?
+ * 0x08 -> size of the content (starting from the byte after this one)
+ * 0xXX -> CollaborationSolution | (CollaborationArchitecture<<7)
+ * 0xXX -> CollaborationPriorities & 0xFF
+ * 0xXX -> (CollaborationPriorities >> 8) & 0xFF
+ * 0xXX -> (CollaborationPriorities >> 16) & 0xFF
+ * 0xXX -> (CollaborationPriorities >> 24) & 0xFF
+ * 0xXX -> Fixed value ?
+ * 0xXX -> Fixed value ?
+ * 0xXX -> Fixed value ?
+ */
+unsigned char hci_write_coexistence_setting[] = { 0x01, 0x41, 0xfc, 0x08, 
+	0x83, 0xb0, 0xbd, 0x7f, 0xcb, 0x00, 0x00, 0x0A};
+
+/* Supported features settings :
+ * Not found in registry, defaulted to LocalSupportedFeatures1 = 0xFE8DFFFF
+ * and LocalSupportedFeatures2 = 0x8000F99B
+ *
+ * Message content :
+ * 0x01 -> header
+ * 0x0b -> msg_id
+ * 0xfc -> ?? msg_type ?
+ * 0x08 -> size of the content (starting from the byte after this one)
+ * 0xXX -> LocalSupportedFeatures1 & 0xFF
+ * 0xXX -> (LocalSupportedFeatures1 >> 8) & 0xFF
+ * 0xXX -> (LocalSupportedFeatures1 >> 16) & 0xFF
+ * 0xXX -> (LocalSupportedFeatures1 >> 24) & 0xFF
+ * 0xXX -> LocalSupportedFeatures2 & 0xFF
+ * 0xXX -> (LocalSupportedFeatures2 >> 8) & 0xFF
+ * 0xXX -> (LocalSupportedFeatures2 >> 16) & 0xFF
+ * 0xXX -> (LocalSupportedFeatures2 >> 24) & 0xFF
+ */
+unsigned char hci_write_supported_features_setting[] = { 0x01, 0x0b, 0xfc, 0x08, 
+	0xff, 0xff, 0x8d, 0xfe, 0x9b, 0xf9, 0x00, 0x80};
+
+/* End of TAG */
 
 int
 parse_patchram(char *optarg)
@@ -264,7 +395,9 @@ parse_cmd_line(int argc, char **argv)
          {0, 0, 0, 0}
        	};
 
-       	c = getopt_long_only (argc, argv, "d", long_options, &option_index);
+/* TAG JB 02/09/2011 (added 'r') */
+        c = getopt_long_only (argc, argv, "dr", long_options, &option_index);
+/* End of TAG */
 
        	if (c == -1) {
       		break;
@@ -286,6 +419,12 @@ parse_cmd_line(int argc, char **argv)
 		case 'd':
 			debug = 1;
 		break;
+
+/* TAG JB 02/09/2011 */
+        case 'r':
+            hard_reset_bt = 1;
+        break;
+/* end of TAG */
 
         case '?':
 			//nobreak
@@ -452,9 +591,100 @@ proc_patchram()
 	proc_reset();
 }
 
+/* TAG JB 03/11/2011 : 
+ * + Enable High speed uart on BCM module (required for baudrate above 3000000 bps)
+ * + Specific device settings (based on winmo values, might be retrieved from a configuration file)
+ */
+void
+proc_high_speed_msg()
+{
+	hci_send_cmd(hci_write_high_speed_uart_msg, sizeof(hci_write_high_speed_uart_msg));
+
+	read_event(uart_fd, buffer);
+
+	if (debug) {
+		fprintf(stderr, "Done setting hs msg\n");
+	}
+}
+
+void
+proc_pcm_settings()
+{
+	hci_send_cmd(hci_write_pcm_setting_1, sizeof(hci_write_pcm_setting_1));
+
+	read_event(uart_fd, buffer);
+
+	if (debug) {
+		fprintf(stderr, "Done setting pcm settings part 1\n");
+	}
+
+	hci_send_cmd(hci_write_pcm_setting_2, sizeof(hci_write_pcm_setting_2));
+
+	read_event(uart_fd, buffer);
+
+	if (debug) {
+		fprintf(stderr, "Done setting pcm settings part 2\n");
+	}
+}
+
+void
+proc_sco_setting()
+{
+	hci_send_cmd(hci_write_sco_setting, sizeof(hci_write_sco_setting));
+
+	read_event(uart_fd, buffer);
+
+	if (debug) {
+		fprintf(stderr, "Done setting sco settings\n");
+	}
+}
+
+void
+proc_comfort_noise_setting()
+{
+	hci_send_cmd(hci_write_comfort_noise_setting, sizeof(hci_write_comfort_noise_setting));
+
+	read_event(uart_fd, buffer);
+
+	if (debug) {
+		fprintf(stderr, "Done setting comfort noise settings\n");
+	}
+}
+
+void
+proc_coexistence_setting()
+{
+	hci_send_cmd(hci_write_coexistence_setting, sizeof(hci_write_coexistence_setting));
+
+	read_event(uart_fd, buffer);
+
+	if (debug) {
+		fprintf(stderr, "Done setting coexistence settings\n");
+	}
+}
+
+void
+proc_supported_features_setting()
+{
+	hci_send_cmd(hci_write_supported_features_setting, sizeof(hci_write_supported_features_setting));
+
+	read_event(uart_fd, buffer);
+
+	if (debug) {
+		fprintf(stderr, "Done setting supported features settings\n");
+	}
+}
+/* End of tag */
+
 void
 proc_baudrate()
 {
+/* TAG JB 03/11/2011 */
+    if ( termios_baudrate >= B3000000 ) {
+        proc_high_speed_msg();
+    }
+/* End of TAG */
+
 	hci_send_cmd(hci_update_baud_rate, sizeof(hci_update_baud_rate));
 
 	read_event(uart_fd, buffer);
@@ -502,17 +732,58 @@ proc_enable_hci()
 	return;
 }
 
+/* TAG JB 03/11/2011 : Ensure proper reset of BCM moduel via power down/up sequence */
+void
+reset_bt()
+{
+    FILE* btfd;
+    char *rfkill = "/sys/class/rfkill/rfkill0/state";
+    char *disable = "0";
+    char *enable = "1";
+    struct timespec req = {0};
+
+    req.tv_sec = 0;
+    req.tv_nsec = RFKILL_WAIT * 1000L;
+
+    btfd = fopen(rfkill, "w");
+    if (btfd == 0 ) {
+        fprintf(stderr, "open(%s) failed: %s (%d)", rfkill, strerror(errno),
+            errno);
+        return;
+    }
+    fputs(disable, btfd);
+    fclose(btfd);
+    nanosleep(&req, (struct timespec *)NULL);
+
+    btfd = fopen(rfkill, "w");
+    if (btfd == 0 ) {
+        fprintf(stderr, "open(%s) failed: %s (%d)", rfkill, strerror(errno),
+            errno);
+        return;
+    }
+    fputs(enable, btfd);
+    fclose(btfd);
+    nanosleep(&req, (struct timespec *)NULL);
+}
+/* End of TAG */
+
 void
 read_default_bdaddr()
 {
 	int sz;
 	int fd;
-	char path[PROPERTY_VALUE_MAX];
+/* TAG JB 03/11/2011 : Read BDADDR from rfkill (who reads bdaddr from smem)
+ * Might be removed if we can use the ro.bt.bdaddr_path property instead. More clean
+ */
+	char path[PROPERTY_VALUE_MAX] = "/sys/module/board_htcraphael_rfkill/parameters/bdaddr";
+/* End of TAG */
 	char bdaddr[18];
 
+#if 0	// Might be reenabled if we can use it
 	property_get("ro.bt.bdaddr_path", path, "");
 	if (path[0] == 0)
 		return;
+#endif
 
 	fd = open(path, O_RDONLY);
 	if (fd < 0) {
@@ -548,6 +819,13 @@ main (int argc, char **argv)
 		exit(1);
 	}
 
+/* TAG JB 03/11/2011 : Ensure proper reset of the module */
+    if (hard_reset_bt) {
+        printf("Hard Resetting BCM module\n");
+        reset_bt();
+    }
+/* End of TAG */
+
 	init_uart();
 
 	proc_reset();
@@ -560,6 +838,7 @@ main (int argc, char **argv)
 		proc_baudrate();
 	}
 
+
 	if (bdaddr_flag) {
 		proc_bdaddr();
 	}
@@ -568,8 +847,19 @@ main (int argc, char **argv)
 		proc_enable_lpm();
 	}
 
+/* TAG JB 03/11/2011 : Specific device settings */
+    proc_pcm_settings();
+    proc_sco_setting();
+    //proc_comfort_noise_setting();
+    //proc_coexistence_setting();
+    //proc_supported_features_setting();
+/* End of TAG */
+
 	if (enable_hci) {
 		proc_enable_hci();
+	}
+
+	if (enable_hci) {
 		while (1) {
 			sleep(UINT_MAX);
 		}
